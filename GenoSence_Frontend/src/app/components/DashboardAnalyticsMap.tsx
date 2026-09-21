@@ -141,6 +141,20 @@ const HOVER_COLOR = '#fbbf24';
 const GREEN_FILL = '#4ade80';
 const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
+async function fetchWithRetry(url: string, options?: RequestInit, attempts = 3) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      if (attempt === attempts - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw new Error(`Unable to fetch ${url}`);
+}
+
 console.log(BACKEND_BASE_URL);
 const HIDDEN_STYLE = {
   color: 'transparent',
@@ -1439,7 +1453,11 @@ export default function DashboardAnalyticsMap() {
     let cancelled = false;
     const loadTimeSeries = async () => {
       try {
-        const infoRes = await fetch(`${BACKEND_BASE_URL}/user/last-upload/info`, { credentials: 'include' });
+        const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const requestOptions: RequestInit = { credentials: 'include', headers };
+        const infoRes = await fetchWithRetry(`${BACKEND_BASE_URL}/user/last-upload/info`, requestOptions);
         let sid = null;
         if (infoRes.ok) {
           const infoData = await infoRes.json();
@@ -1449,7 +1467,7 @@ export default function DashboardAnalyticsMap() {
         
         let labels = [...UAV_DATES];
         if (sid) {
-          const sessRes = await fetch(`${BACKEND_BASE_URL}/session/${sid}/info`);
+          const sessRes = await fetchWithRetry(`${BACKEND_BASE_URL}/session/${sid}/info`, requestOptions);
           if (sessRes.ok) {
             const sessData = await sessRes.json();
             if (sessData.timestamp_labels && sessData.timestamp_labels.length > 0) {
@@ -1460,7 +1478,7 @@ export default function DashboardAnalyticsMap() {
         if (!cancelled) setTimestampLabels(labels);
         
         const qs = sid ? `?session_id=${sid}` : '';
-        const tsRes = await fetch(`${BACKEND_BASE_URL}/temporal/time-series${qs}`);
+        const tsRes = await fetchWithRetry(`${BACKEND_BASE_URL}/temporal/time-series${qs}`, requestOptions);
         if (tsRes.ok) {
           const tsData = await tsRes.json();
           if (!cancelled) {
@@ -1471,8 +1489,12 @@ export default function DashboardAnalyticsMap() {
             }
           }
         }
-      } catch (e) {
-        console.error(e);
+      } catch {
+        if (!cancelled) {
+          setEffectiveSessionId(null);
+          setTimestampLabels([...UAV_DATES]);
+          setTimeSeriesData([]);
+        }
       }
     };
     loadTimeSeries();
@@ -1587,14 +1609,17 @@ export default function DashboardAnalyticsMap() {
       const sampleTemporalUrl = `${BACKEND_BASE_URL}/samples/temporalDataSet.csv`;
       const userPlotsUrl = `${BACKEND_BASE_URL}/user/last-upload/geojson`;
       const userTemporalUrl = `${BACKEND_BASE_URL}/user/last-upload/temporal-csv`;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      const authHeaders: Record<string, string> = {};
+      if (token) authHeaders.Authorization = `Bearer ${token}`;
 
       let plotResponse: Response | null = null;
       let csvResponse: Response | null = null;
 
       try {
         [plotResponse, csvResponse] = await Promise.all([
-          fetch(userPlotsUrl, { credentials: 'include' }),
-          fetch(userTemporalUrl, { credentials: 'include' }),
+          fetch(userPlotsUrl, { credentials: 'include', headers: authHeaders }),
+          fetch(userTemporalUrl, { credentials: 'include', headers: authHeaders }),
         ]);
       } catch {
         plotResponse = null;

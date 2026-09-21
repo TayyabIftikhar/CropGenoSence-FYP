@@ -23,7 +23,7 @@ from google.auth.transport import requests
 from google.oauth2 import id_token
 from passlib.context import CryptContext
 from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from bson import ObjectId
 
 from dotenv import load_dotenv
@@ -56,7 +56,15 @@ R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
 
-mongo_client = MongoClient(MONGO_URL) if MONGO_URL else None
+mongo_client = (
+    MongoClient(
+        MONGO_URL,
+        serverSelectionTimeoutMS=int(os.getenv("MONGO_SERVER_SELECTION_TIMEOUT_MS", "5000")),
+        connectTimeoutMS=int(os.getenv("MONGO_CONNECT_TIMEOUT_MS", "5000")),
+    )
+    if MONGO_URL
+    else None
+)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 MAX_BCRYPT_PASSWORD_BYTES = 72
 
@@ -85,8 +93,14 @@ def root_health() -> JSONResponse:
 def ensure_indexes() -> None:
     if not mongo_client:
         return
-    users = get_users_collection()
-    users.create_index("email", unique=True)
+    try:
+        users = get_users_collection()
+        users.create_index("email", unique=True)
+    except PyMongoError as exc:
+        print(
+            "WARNING: MongoDB is unavailable; the API started without database features. "
+            f"Check Atlas/network configuration. Details: {exc}"
+        )
 
 
 class ChatMessage(BaseModel):
